@@ -661,6 +661,17 @@ impl Grid {
         });
     }
 
+    pub fn get_command_markers(&self) -> &[CommandMarker] {
+        &self.command_markers
+    }
+
+    pub fn get_markers_in_range(&self, start_line: usize, end_line: usize) -> Vec<&CommandMarker> {
+        self.command_markers
+            .iter()
+            .filter(|m| m.line_number >= start_line && m.line_number <= end_line)
+            .collect()
+    }
+
     fn recalculate_scrollback_buffer_count(&self) -> usize {
         let mut scrollback_buffer_count = 0;
         for row in &self.lines_above {

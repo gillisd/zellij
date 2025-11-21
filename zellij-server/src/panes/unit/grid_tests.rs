@@ -3989,3 +3989,38 @@ fn test_osc_133_command_line_text() {
     assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandLine);
     assert_eq!(grid.command_markers[0].command_text, Some("ls -la".to_string()));
 }
+
+#[test]
+fn test_get_command_markers() {
+    let mut grid = create_test_grid();
+
+    // Add multiple markers
+    let params_a = vec![b"133".as_ref(), b"A".as_ref()];
+    let params_c = vec![b"133".as_ref(), b"C".as_ref()];
+    grid.osc_dispatch(&params_a, true);
+    grid.osc_dispatch(&params_c, true);
+
+    let markers = grid.get_command_markers();
+    assert_eq!(markers.len(), 2);
+    assert_eq!(markers[0].marker_type, CommandMarkerType::PromptStart);
+    assert_eq!(markers[1].marker_type, CommandMarkerType::CommandExecutionStart);
+}
+
+#[test]
+fn test_get_markers_in_range() {
+    let mut grid = create_test_grid();
+
+    // Simulate cursor at different lines
+    grid.cursor.y = 0;
+    grid.osc_dispatch(&[b"133", b"A"], true);
+
+    grid.cursor.y = 5;
+    grid.osc_dispatch(&[b"133", b"C"], true);
+
+    grid.cursor.y = 10;
+    grid.osc_dispatch(&[b"133", b"D", b"0"], true);
+
+    let markers_in_range = grid.get_markers_in_range(4, 8);
+    assert_eq!(markers_in_range.len(), 1);
+    assert_eq!(markers_in_range[0].marker_type, CommandMarkerType::CommandExecutionStart);
+}
