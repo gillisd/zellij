@@ -4047,3 +4047,36 @@ fn test_clear_markers_before_line() {
     assert_eq!(grid.command_markers.len(), 1);
     assert_eq!(grid.command_markers[0].line_number, 10);
 }
+
+#[test]
+fn test_osc_133_via_vte_parser() {
+    let mut grid = create_test_grid();
+    let mut parser = vte::Parser::new();
+
+    // Send complete OSC 133;A sequence through VTE parser
+    let sequence = b"\x1b]133;A\x1b\\";
+    for &byte in sequence {
+        parser.advance(&mut grid, byte);
+    }
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptStart);
+}
+
+#[test]
+fn test_full_command_cycle_via_vte() {
+    let mut grid = create_test_grid();
+    let mut parser = vte::Parser::new();
+
+    // Prompt start
+    for &byte in b"\x1b]133;A\x1b\\" { parser.advance(&mut grid, byte); }
+
+    // Command start
+    for &byte in b"\x1b]133;C\x1b\\" { parser.advance(&mut grid, byte); }
+
+    // Command end with exit code
+    for &byte in b"\x1b]133;D;0\x1b\\" { parser.advance(&mut grid, byte); }
+
+    assert_eq!(grid.command_markers.len(), 3);
+    assert_eq!(grid.command_markers[2].exit_code, Some(0));
+}
