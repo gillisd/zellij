@@ -1,10 +1,15 @@
-# Implementation Plan: Command Output Separation in Zellij
+# Implementation Plan: Command Output Separation in Zellij (TDD Approach)
 
 ## Overview
 
 **Goal**: Add support for command output separators to enable logging terminal output with clear boundaries between commands.
 
-**Approach**: Implement OSC 133 (Shell Integration Protocol) support in Zellij's terminal emulator to mark command boundaries invisibly.
+**Approach**: Implement OSC 133 (Shell Integration Protocol) support in Zellij's terminal emulator using Test-Driven Development (TDD).
+
+**Development Method**: RED-GREEN-REFACTOR cycles
+- 🔴 **RED**: Write a failing test
+- 🟢 **GREEN**: Write minimal code to make it pass
+- 🔵 **REFACTOR**: Clean up and optimize
 
 ## Why OSC 133?
 
@@ -24,43 +29,68 @@ The protocol uses `ESC]133;<marker>;[params]ESC\` format:
 - **OSC 133;D;[exit_code]**: Command end with optional exit code
 - **OSC 133;E;[command_text]**: Command line text (optional)
 
-## Implementation Steps
+## TDD Implementation Cycles
 
-### Step 1: Define Data Structures
+---
+
+## 🔴 CYCLE 1: OSC 133;A - Basic Prompt Start Marker
+
+### RED: Write Failing Test First
+
+**File**: `zellij-server/src/panes/unit/grid_tests.rs`
+
+**Location**: Add at the end of the file (before closing braces)
+
+```rust
+#[test]
+fn test_osc_133_prompt_start_marker() {
+    // Arrange: Create a test grid
+    let mut grid = create_test_grid();
+
+    // Act: Send OSC 133;A (prompt start)
+    let params = vec![b"133".as_ref(), b"A".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    // Assert: Should create one PromptStart marker
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptStart);
+    assert_eq!(grid.command_markers[0].line_number, 0);
+    assert_eq!(grid.command_markers[0].column_number, 0);
+}
+```
+
+**Run the test** (it will fail):
+```bash
+cd /home/user/zellij
+cargo test test_osc_133_prompt_start_marker
+```
+
+**Expected failure**: Compilation errors about missing types.
+
+### GREEN: Minimal Implementation to Pass
 
 **File**: `zellij-server/src/panes/grid.rs`
 
-Add a new module for command markers:
+**Step 1**: Add data structures (around line 40, after imports)
 
 ```rust
-// Around line 40, after existing imports
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandMarkerType {
-    PromptStart,           // OSC 133;A
-    PromptEnd,             // OSC 133;B
-    CommandExecutionStart, // OSC 133;C
-    CommandEnd,            // OSC 133;D
-    CommandLine,           // OSC 133;E
+    PromptStart,
 }
 
 #[derive(Debug, Clone)]
 pub struct CommandMarker {
     pub marker_type: CommandMarkerType,
-    pub line_number: usize,        // Line in viewport + scrollback
-    pub column_number: usize,      // Column position
-    pub exit_code: Option<i32>,    // For CommandEnd markers
-    pub command_text: Option<String>, // For CommandLine markers
-    pub timestamp: u64,            // Unix timestamp in milliseconds
+    pub line_number: usize,
+    pub column_number: usize,
+    pub timestamp: u64,
 }
 ```
 
-### Step 2: Add Marker Storage to Grid
-
-**File**: `zellij-server/src/panes/grid.rs`
-
-In the `Grid` struct (around line 314), add:
+**Step 2**: Add storage to Grid struct (around line 314)
 
 ```rust
 pub struct Grid {
@@ -69,7 +99,7 @@ pub struct Grid {
 }
 ```
 
-In `Grid::new()` (around line 503), initialize:
+**Step 3**: Initialize in `Grid::new()` (around line 503)
 
 ```rust
 Grid {
@@ -78,20 +108,204 @@ Grid {
 }
 ```
 
-### Step 3: Implement OSC 133 Handler
+**Step 4**: Add minimal OSC handler in `osc_dispatch()` (around line 2575, before default case)
+
+```rust
+match params[0] {
+    // ... existing cases ...
+
+    b"133" => {
+        if params.len() >= 2 && params[1] == b"A" {
+            let timestamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+
+            self.command_markers.push(CommandMarker {
+                marker_type: CommandMarkerType::PromptStart,
+                line_number: self.cursor.y + self.lines_above.len(),
+                column_number: self.cursor.x,
+                timestamp,
+            });
+        }
+    },
+
+    _ => { /* ... */ }
+}
+```
+
+**Run the test again**:
+```bash
+cargo test test_osc_133_prompt_start_marker
+```
+
+**Expected**: Test passes! ✅
+
+### REFACTOR: Clean Up (Optional for Cycle 1)
+
+No refactoring needed yet - code is simple enough.
+
+---
+
+## 🔴 CYCLE 2: Add Remaining Marker Types (B, C, D, E)
+
+### RED: Write Tests for All Marker Types
+
+**File**: `zellij-server/src/panes/unit/grid_tests.rs`
+
+```rust
+#[test]
+fn test_osc_133_prompt_end_marker() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"B".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptEnd);
+}
+
+#[test]
+fn test_osc_133_command_start_marker() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"C".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandExecutionStart);
+}
+
+#[test]
+fn test_osc_133_command_end_marker_with_exit_code() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"D".as_ref(), b"127".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandEnd);
+    assert_eq!(grid.command_markers[0].exit_code, Some(127));
+}
+
+#[test]
+fn test_osc_133_command_line_text() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"E".as_ref(), b"ls -la".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandLine);
+    assert_eq!(grid.command_markers[0].command_text, Some("ls -la".to_string()));
+}
+```
+
+**Run tests** (they will fail):
+```bash
+cargo test test_osc_133
+```
+
+**Expected failures**: Missing enum variants and struct fields.
+
+### GREEN: Extend Implementation
 
 **File**: `zellij-server/src/panes/grid.rs`
 
-In `impl Grid`, add helper methods (around line 2470, before `impl Perform`):
+**Step 1**: Extend `CommandMarkerType` enum
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandMarkerType {
+    PromptStart,           // OSC 133;A
+    PromptEnd,             // OSC 133;B
+    CommandExecutionStart, // OSC 133;C
+    CommandEnd,            // OSC 133;D
+    CommandLine,           // OSC 133;E
+}
+```
+
+**Step 2**: Extend `CommandMarker` struct
+
+```rust
+#[derive(Debug, Clone)]
+pub struct CommandMarker {
+    pub marker_type: CommandMarkerType,
+    pub line_number: usize,
+    pub column_number: usize,
+    pub exit_code: Option<i32>,
+    pub command_text: Option<String>,
+    pub timestamp: u64,
+}
+```
+
+**Step 3**: Update OSC handler to handle all types
+
+```rust
+b"133" => {
+    if params.len() >= 2 {
+        let marker_type = match params[1] {
+            b"A" => Some(CommandMarkerType::PromptStart),
+            b"B" => Some(CommandMarkerType::PromptEnd),
+            b"C" => Some(CommandMarkerType::CommandExecutionStart),
+            b"D" => Some(CommandMarkerType::CommandEnd),
+            b"E" => Some(CommandMarkerType::CommandLine),
+            _ => None,
+        };
+
+        if let Some(marker_type) = marker_type {
+            let timestamp = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+
+            let exit_code = if marker_type == CommandMarkerType::CommandEnd && params.len() >= 3 {
+                std::str::from_utf8(params[2])
+                    .ok()
+                    .and_then(|s| s.trim().parse::<i32>().ok())
+            } else {
+                None
+            };
+
+            let command_text = if marker_type == CommandMarkerType::CommandLine && params.len() >= 3 {
+                std::str::from_utf8(params[2])
+                    .ok()
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+
+            self.command_markers.push(CommandMarker {
+                marker_type,
+                line_number: self.cursor.y + self.lines_above.len(),
+                column_number: self.cursor.x,
+                exit_code,
+                command_text,
+                timestamp,
+            });
+        }
+    }
+},
+```
+
+**Run tests**:
+```bash
+cargo test test_osc_133
+```
+
+**Expected**: All tests pass! ✅
+
+### REFACTOR: Extract Helper Method
+
+**File**: `zellij-server/src/panes/grid.rs`
+
+Add before `impl Perform for Grid` (around line 2470):
 
 ```rust
 impl Grid {
     // ... existing methods ...
 
     fn record_command_marker(&mut self, marker_type: CommandMarkerType, params: &[&[u8]]) {
-        let line_number = self.cursor.y + self.lines_above.len();
-        let column_number = self.cursor.x;
-
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -113,79 +327,107 @@ impl Grid {
             None
         };
 
-        let marker = CommandMarker {
+        self.command_markers.push(CommandMarker {
             marker_type,
-            line_number,
-            column_number,
+            line_number: self.cursor.y + self.lines_above.len(),
+            column_number: self.cursor.x,
             exit_code,
             command_text,
             timestamp,
-        };
-
-        self.command_markers.push(marker);
+        });
 
         if self.debug {
-            log::info!("Command marker: {:?}", marker);
+            log::info!("Command marker recorded: {:?}", self.command_markers.last());
         }
     }
 }
 ```
 
-### Step 4: Add OSC 133 Dispatch Handler
-
-**File**: `zellij-server/src/panes/grid.rs`
-
-In `osc_dispatch()` method (around line 2575), add new case before the default case:
+Update OSC handler to use helper:
 
 ```rust
-fn osc_dispatch(&mut self, params: &[&[u8]], bell_terminated: bool) {
-    // ... existing code ...
-
-    match params[0] {
-        // ... existing cases (b"0", b"2", b"4", b"8", etc.) ...
-
-        // OSC 133 - Shell Integration / Command Markers
-        b"133" => {
-            if params.len() >= 2 {
-                match params[1] {
-                    b"A" => {
-                        self.record_command_marker(CommandMarkerType::PromptStart, params);
-                    },
-                    b"B" => {
-                        self.record_command_marker(CommandMarkerType::PromptEnd, params);
-                    },
-                    b"C" => {
-                        self.record_command_marker(CommandMarkerType::CommandExecutionStart, params);
-                    },
-                    b"D" => {
-                        self.record_command_marker(CommandMarkerType::CommandEnd, params);
-                    },
-                    b"E" => {
-                        self.record_command_marker(CommandMarkerType::CommandLine, params);
-                    },
-                    _ => {
-                        if self.debug {
-                            log::warn!("Unknown OSC 133 subcommand: {:?}", params[1]);
-                        }
-                    },
+b"133" => {
+    if params.len() >= 2 {
+        match params[1] {
+            b"A" => self.record_command_marker(CommandMarkerType::PromptStart, params),
+            b"B" => self.record_command_marker(CommandMarkerType::PromptEnd, params),
+            b"C" => self.record_command_marker(CommandMarkerType::CommandExecutionStart, params),
+            b"D" => self.record_command_marker(CommandMarkerType::CommandEnd, params),
+            b"E" => self.record_command_marker(CommandMarkerType::CommandLine, params),
+            _ => {
+                if self.debug {
+                    log::warn!("Unknown OSC 133 subcommand: {:?}", params[1]);
                 }
-            }
-        },
-
-        _ => {
-            if self.debug {
-                log::warn!("Unhandled osc: {:?}", params);
-            }
-        },
+            },
+        }
     }
+},
+```
+
+**Run tests again**:
+```bash
+cargo test test_osc_133
+```
+
+**Expected**: Still passing! ✅
+
+---
+
+## 🔴 CYCLE 3: Add Public API for Marker Access
+
+### RED: Write Tests for Getter Methods
+
+**File**: `zellij-server/src/panes/unit/grid_tests.rs`
+
+```rust
+#[test]
+fn test_get_command_markers() {
+    let mut grid = create_test_grid();
+
+    // Add multiple markers
+    let params_a = vec![b"133".as_ref(), b"A".as_ref()];
+    let params_c = vec![b"133".as_ref(), b"C".as_ref()];
+    grid.osc_dispatch(&params_a, true);
+    grid.osc_dispatch(&params_c, true);
+
+    let markers = grid.get_command_markers();
+    assert_eq!(markers.len(), 2);
+    assert_eq!(markers[0].marker_type, CommandMarkerType::PromptStart);
+    assert_eq!(markers[1].marker_type, CommandMarkerType::CommandExecutionStart);
+}
+
+#[test]
+fn test_get_markers_in_range() {
+    let mut grid = create_test_grid();
+
+    // Simulate cursor at different lines
+    grid.cursor.y = 0;
+    grid.osc_dispatch(&[b"133", b"A"], true);
+
+    grid.cursor.y = 5;
+    grid.osc_dispatch(&[b"133", b"C"], true);
+
+    grid.cursor.y = 10;
+    grid.osc_dispatch(&[b"133", b"D", b"0"], true);
+
+    let markers_in_range = grid.get_markers_in_range(4, 8);
+    assert_eq!(markers_in_range.len(), 1);
+    assert_eq!(markers_in_range[0].marker_type, CommandMarkerType::CommandExecutionStart);
 }
 ```
 
-### Step 5: Add Public API to Access Markers
+**Run tests** (they will fail):
+```bash
+cargo test test_get_command_markers
+```
+
+**Expected failures**: Method not found.
+
+### GREEN: Implement Getter Methods
 
 **File**: `zellij-server/src/panes/grid.rs`
 
-Add getter methods in `impl Grid`:
+Add to `impl Grid`:
 
 ```rust
 impl Grid {
@@ -201,6 +443,63 @@ impl Grid {
             .filter(|m| m.line_number >= start_line && m.line_number <= end_line)
             .collect()
     }
+}
+```
+
+**Run tests**:
+```bash
+cargo test test_get_command_markers
+```
+
+**Expected**: Tests pass! ✅
+
+### REFACTOR: No refactoring needed
+
+---
+
+## 🔴 CYCLE 4: Handle Scrollback Cleanup
+
+### RED: Write Test for Marker Cleanup
+
+**File**: `zellij-server/src/panes/unit/grid_tests.rs`
+
+```rust
+#[test]
+fn test_clear_markers_before_line() {
+    let mut grid = create_test_grid();
+
+    // Add markers at lines 0, 5, 10
+    grid.cursor.y = 0;
+    grid.osc_dispatch(&[b"133", b"A"], true);
+
+    grid.cursor.y = 5;
+    grid.osc_dispatch(&[b"133", b"C"], true);
+
+    grid.cursor.y = 10;
+    grid.osc_dispatch(&[b"133", b"D", b"0"], true);
+
+    assert_eq!(grid.command_markers.len(), 3);
+
+    // Clear markers before line 6
+    grid.clear_markers_before_line(6);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].line_number, 10);
+}
+```
+
+**Run test** (will fail):
+```bash
+cargo test test_clear_markers_before_line
+```
+
+### GREEN: Implement Cleanup Method
+
+**File**: `zellij-server/src/panes/grid.rs`
+
+```rust
+impl Grid {
+    // ... existing methods ...
 
     pub fn clear_markers_before_line(&mut self, line: usize) {
         self.command_markers.retain(|m| m.line_number >= line);
@@ -208,136 +507,72 @@ impl Grid {
 }
 ```
 
-### Step 6: Handle Scrollback Cleanup
-
-**File**: `zellij-server/src/panes/grid.rs`
-
-When scrollback is trimmed, clean up old markers. Find where `lines_above` is modified (search for `lines_above.drain` or similar) and add marker cleanup.
-
-Example location might be in a method that manages scrollback buffer. Add:
-
-```rust
-// After lines are removed from scrollback
-let removed_lines = number_of_lines_removed;
-self.command_markers.retain(|m| m.line_number >= removed_lines);
-for marker in &mut self.command_markers {
-    marker.line_number -= removed_lines;
-}
+**Run test**:
+```bash
+cargo test test_clear_markers_before_line
 ```
 
-### Step 7: Expose Markers Through Terminal Pane API
+**Expected**: Test passes! ✅
 
-**File**: `zellij-server/src/panes/terminal_pane.rs`
+---
 
-Add methods to expose markers:
+## 🔴 CYCLE 5: Integration Testing with VTE Parser
 
-```rust
-impl TerminalPane {
-    // Add these methods (find a good location in the impl block)
-
-    pub fn get_command_markers(&self) -> &[CommandMarker] {
-        self.grid.get_command_markers()
-    }
-
-    pub fn get_markers_in_viewport(&self) -> Vec<&CommandMarker> {
-        let viewport_start = self.grid.lines_above.len();
-        let viewport_end = viewport_start + self.grid.height;
-        self.grid.get_markers_in_range(viewport_start, viewport_end)
-    }
-}
-```
-
-### Step 8: Add Configuration Option (Optional)
-
-**File**: `zellij-utils/src/input/options.rs`
-
-Add a configuration option to enable/disable marker tracking:
-
-```rust
-pub struct Options {
-    // ... existing fields ...
-
-    /// Enable shell integration markers (OSC 133)
-    #[clap(long, value_parser)]
-    #[serde(default)]
-    pub shell_integration: Option<bool>,
-}
-```
-
-**File**: `zellij-server/src/panes/grid.rs`
-
-Add field to Grid:
-
-```rust
-pub struct Grid {
-    // ... existing fields ...
-    shell_integration_enabled: bool,
-    pub command_markers: Vec<CommandMarker>,
-}
-```
-
-Update `record_command_marker` to check the flag:
-
-```rust
-fn record_command_marker(&mut self, marker_type: CommandMarkerType, params: &[&[u8]]) {
-    if !self.shell_integration_enabled {
-        return;
-    }
-    // ... rest of implementation ...
-}
-```
-
-## Testing Strategy
-
-### Unit Tests
+### RED: Write End-to-End Test
 
 **File**: `zellij-server/src/panes/unit/grid_tests.rs`
 
-Add tests for OSC 133 handling:
-
 ```rust
 #[test]
-fn test_osc_133_prompt_markers() {
-    let mut grid = create_test_grid();
+fn test_osc_133_via_vte_parser() {
+    use vte::{Parser, Perform};
 
-    // Send OSC 133;A (prompt start)
-    let params = vec![b"133".as_ref(), b"A".as_ref()];
-    grid.osc_dispatch(&params, true);
+    let mut grid = create_test_grid();
+    let mut parser = Parser::new();
+
+    // Send complete OSC 133;A sequence through VTE parser
+    let sequence = b"\x1b]133;A\x1b\\";
+    for &byte in sequence {
+        parser.advance(&mut grid, byte);
+    }
 
     assert_eq!(grid.command_markers.len(), 1);
     assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptStart);
 }
 
 #[test]
-fn test_osc_133_command_end_with_exit_code() {
+fn test_full_command_cycle_via_vte() {
+    use vte::{Parser, Perform};
+
     let mut grid = create_test_grid();
+    let mut parser = Parser::new();
 
-    // Send OSC 133;D;127 (command end with exit code 127)
-    let params = vec![b"133".as_ref(), b"D".as_ref(), b"127".as_ref()];
-    grid.osc_dispatch(&params, true);
+    // Prompt start
+    for &byte in b"\x1b]133;A\x1b\\" { parser.advance(&mut grid, byte); }
 
-    assert_eq!(grid.command_markers.len(), 1);
-    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandEnd);
-    assert_eq!(grid.command_markers[0].exit_code, Some(127));
-}
+    // Command start
+    for &byte in b"\x1b]133;C\x1b\\" { parser.advance(&mut grid, byte); }
 
-#[test]
-fn test_osc_133_command_line_text() {
-    let mut grid = create_test_grid();
+    // Command end with exit code
+    for &byte in b"\x1b]133;D;0\x1b\\" { parser.advance(&mut grid, byte); }
 
-    // Send OSC 133;E;ls -la
-    let params = vec![b"133".as_ref(), b"E".as_ref(), b"ls -la".as_ref()];
-    grid.osc_dispatch(&params, true);
-
-    assert_eq!(grid.command_markers.len(), 1);
-    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandLine);
-    assert_eq!(grid.command_markers[0].command_text, Some("ls -la".to_string()));
+    assert_eq!(grid.command_markers.len(), 3);
+    assert_eq!(grid.command_markers[2].exit_code, Some(0));
 }
 ```
 
-### Integration Testing
+**Run test**:
+```bash
+cargo test test_osc_133_via_vte_parser
+```
 
-Create a test script to emit OSC 133 sequences:
+**Expected**: Should pass if VTE parser correctly calls `osc_dispatch()` ✅
+
+---
+
+## Manual Integration Testing
+
+After all automated tests pass, create a manual test script:
 
 **File**: `test-osc133.sh`
 
@@ -366,18 +601,42 @@ echo "Hello World"
 printf '\e]133;D;0\e\\'
 
 echo ""
-echo "Test complete"
+echo "Test complete - markers should be recorded"
 ```
 
-Run in Zellij with debug mode:
+Make executable and run:
 ```bash
-zellij --debug
+chmod +x test-osc133.sh
+zellij --debug  # Debug mode to see log messages
 # In pane, run:
 ./test-osc133.sh
-# Check logs for "Command marker:" messages
+# Check logs for "Command marker recorded:" messages
 ```
 
-## Shell Integration Setup
+---
+
+## TDD Summary
+
+**Cycles Completed:**
+1. ✅ Basic OSC 133;A support
+2. ✅ All marker types (A, B, C, D, E)
+3. ✅ Public API for marker access
+4. ✅ Scrollback cleanup
+5. ✅ End-to-end VTE integration
+
+**Test Coverage:**
+- Unit tests for each marker type
+- Tests for exit code parsing
+- Tests for command text extraction
+- Tests for range queries
+- Tests for cleanup operations
+- Integration tests with VTE parser
+
+---
+
+## Shell Integration Setup (Post-Implementation)
+
+Once all tests pass and the feature is implemented, configure your shell to emit OSC 133 markers:
 
 ### Bash Configuration
 
@@ -491,14 +750,66 @@ fn extract_commands_from_log(pane: &TerminalPane) {
 }
 ```
 
-## Rollout Plan
+## Development Workflow
 
-1. **Phase 1**: Implement core functionality (Steps 1-5)
-2. **Phase 2**: Add tests (Step 8 - Testing Strategy)
-3. **Phase 3**: Add configuration option (Step 8 - Optional)
-4. **Phase 4**: Document in Zellij docs
-5. **Phase 5**: Create shell integration scripts for common shells
-6. **Phase 6**: Submit PR to Zellij project
+Following TDD methodology, each cycle follows this pattern:
+
+1. **🔴 RED**: Write a failing test
+   - Run test: `cargo test <test_name>`
+   - Confirm it fails with expected error
+
+2. **🟢 GREEN**: Write minimal code to pass
+   - Implement just enough to make test pass
+   - Run test: `cargo test <test_name>`
+   - Confirm it passes
+
+3. **🔵 REFACTOR**: Clean up (if needed)
+   - Extract common code
+   - Improve readability
+   - Run ALL tests: `cargo test test_osc_133`
+   - Confirm nothing broke
+
+4. **Commit** after each successful cycle
+   ```bash
+   git add .
+   git commit -m "Add OSC 133 <feature> support"
+   ```
+
+## Implementation Checklist
+
+- [ ] **Cycle 1**: Basic OSC 133;A support
+  - [ ] RED: Write test for PromptStart marker
+  - [ ] GREEN: Add minimal data structures and handler
+  - [ ] Verify: `cargo test test_osc_133_prompt_start_marker`
+
+- [ ] **Cycle 2**: All marker types
+  - [ ] RED: Write tests for B, C, D, E markers
+  - [ ] GREEN: Extend enums and handler
+  - [ ] REFACTOR: Extract `record_command_marker()` helper
+  - [ ] Verify: `cargo test test_osc_133`
+
+- [ ] **Cycle 3**: Public API
+  - [ ] RED: Write tests for getter methods
+  - [ ] GREEN: Implement `get_command_markers()` and `get_markers_in_range()`
+  - [ ] Verify: `cargo test test_get_command_markers`
+
+- [ ] **Cycle 4**: Scrollback cleanup
+  - [ ] RED: Write test for marker cleanup
+  - [ ] GREEN: Implement `clear_markers_before_line()`
+  - [ ] Verify: `cargo test test_clear_markers_before_line`
+
+- [ ] **Cycle 5**: VTE integration
+  - [ ] RED: Write end-to-end tests with VTE parser
+  - [ ] GREEN: Verify existing implementation works
+  - [ ] Verify: `cargo test test_osc_133_via_vte_parser`
+
+- [ ] **Manual testing**: Run `test-osc133.sh` in Zellij
+
+- [ ] **Final verification**: Run full test suite
+  ```bash
+  cargo test
+  cargo build --release
+  ```
 
 ## Benefits
 
@@ -541,11 +852,42 @@ This gives you complete control but loses standards compliance benefits.
 - `zellij-utils/src/input/options.rs` - Configuration
 - `zellij-server/src/panes/unit/grid_tests.rs` - Testing
 
-## Estimated Effort
+## Estimated Effort (TDD Approach)
 
-- Core implementation: ~4 hours
-- Testing: ~2 hours
-- Shell integration scripts: ~1 hour
-- Documentation: ~1 hour
+- **Cycle 1** (Basic OSC 133;A): ~45 minutes
+  - Write test: 10 min
+  - Minimal implementation: 30 min
+  - Verification: 5 min
 
-**Total: ~8 hours of development time**
+- **Cycle 2** (All marker types): ~1.5 hours
+  - Write tests: 20 min
+  - Extend implementation: 45 min
+  - Refactor: 20 min
+  - Verification: 5 min
+
+- **Cycle 3** (Public API): ~30 minutes
+  - Write tests: 10 min
+  - Implement getters: 15 min
+  - Verification: 5 min
+
+- **Cycle 4** (Scrollback cleanup): ~30 minutes
+  - Write test: 10 min
+  - Implement cleanup: 15 min
+  - Verification: 5 min
+
+- **Cycle 5** (VTE integration): ~30 minutes
+  - Write integration tests: 15 min
+  - Verify integration: 10 min
+  - Debugging: 5 min
+
+- **Manual testing**: ~30 minutes
+- **Shell integration scripts**: ~30 minutes
+- **Documentation**: ~30 minutes
+
+**Total: ~5 hours of development time**
+
+*Note: TDD often results in faster development despite writing tests first, because:*
+- Less debugging time (tests catch issues immediately)
+- Better design decisions (tests drive good API design)
+- More confidence in changes (comprehensive test coverage)
+- Easier refactoring (tests ensure nothing breaks)
