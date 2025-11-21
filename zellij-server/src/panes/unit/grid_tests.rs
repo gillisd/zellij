@@ -1,11 +1,11 @@
 use super::super::Grid;
-use crate::panes::grid::SixelImageStore;
+use crate::panes::grid::{CommandMarkerType, SixelImageStore};
 use crate::panes::link_handler::LinkHandler;
 use ::insta::assert_snapshot;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use vte;
+use vte::{self, Perform};
 use zellij_utils::{
     data::{Palette, Style},
     pane_size::SizeInPixels,
@@ -3899,4 +3899,46 @@ fn cannot_escape_scroll_region() {
         vte_parser.advance(&mut grid, *byte);
     }
     assert_snapshot!(format!("{:?}", grid));
+}
+
+// Helper function for OSC 133 tests
+fn create_test_grid() -> Grid {
+    let sixel_image_store = Rc::new(RefCell::new(SixelImageStore::default()));
+    let terminal_emulator_color_codes = Rc::new(RefCell::new(HashMap::new()));
+    let debug = false;
+    let arrow_fonts = true;
+    let styled_underlines = true;
+    let explicitly_disable_kitty_keyboard_protocol = false;
+
+    Grid::new(
+        20,
+        80,
+        Rc::new(RefCell::new(Palette::default())),
+        terminal_emulator_color_codes,
+        Rc::new(RefCell::new(LinkHandler::new())),
+        Rc::new(RefCell::new(None)),
+        sixel_image_store,
+        Style::default(),
+        debug,
+        arrow_fonts,
+        styled_underlines,
+        explicitly_disable_kitty_keyboard_protocol,
+    )
+}
+
+// 🔴 RED - Cycle 1: Test for OSC 133;A (Prompt Start)
+#[test]
+fn test_osc_133_prompt_start_marker() {
+    // Arrange: Create a test grid
+    let mut grid = create_test_grid();
+
+    // Act: Send OSC 133;A (prompt start)
+    let params = vec![b"133".as_ref(), b"A".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    // Assert: Should create one PromptStart marker
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptStart);
+    assert_eq!(grid.command_markers[0].line_number, 0);
+    assert_eq!(grid.command_markers[0].column_number, 0);
 }

@@ -40,6 +40,21 @@ use crate::panes::terminal_character::{
 use crate::panes::Selection;
 use crate::ui::components::UiComponentParser;
 use zellij_utils::data::PaneContents;
+use std::time::SystemTime;
+
+// OSC 133 Shell Integration Support
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandMarkerType {
+    PromptStart,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandMarker {
+    pub marker_type: CommandMarkerType,
+    pub line_number: usize,
+    pub column_number: usize,
+    pub timestamp: u64,
+}
 
 fn get_top_non_canonical_rows(rows: &mut Vec<Row>) -> Vec<Row> {
     let mut index_of_last_non_canonical_row = None;
@@ -364,6 +379,7 @@ pub struct Grid {
     // disabled by user config?
     click: Click,
     hyperlink_tracker: HyperlinkTracker,
+    pub command_markers: Vec<CommandMarker>,
 }
 
 const CLICK_TIME_THRESHOLD: u128 = 400; // Doherty Threshold
@@ -552,6 +568,7 @@ impl Grid {
             explicitly_disable_kitty_keyboard_protocol,
             click: Click::default(),
             hyperlink_tracker: HyperlinkTracker::new(),
+            command_markers: Vec::new(),
         }
     }
     pub fn render_full_viewport(&mut self) {
@@ -2758,6 +2775,23 @@ impl Perform for Grid {
             // Reset text cursor color.
             b"112" => {
                 // TBD - reset text cursor color - currently unimplemented
+            },
+
+            // OSC 133 - Shell Integration / Command Markers
+            b"133" => {
+                if params.len() >= 2 && params[1] == b"A" {
+                    let timestamp = SystemTime::now()
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+
+                    self.command_markers.push(CommandMarker {
+                        marker_type: CommandMarkerType::PromptStart,
+                        line_number: self.cursor.y + self.lines_above.len(),
+                        column_number: self.cursor.x,
+                        timestamp,
+                    });
+                }
             },
 
             _ => {
