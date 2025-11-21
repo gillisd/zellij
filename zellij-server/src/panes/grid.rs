@@ -672,6 +672,10 @@ impl Grid {
             .collect()
     }
 
+    pub fn clear_markers_before_line(&mut self, line: usize) {
+        self.command_markers.retain(|m| m.line_number >= line);
+    }
+
     fn recalculate_scrollback_buffer_count(&self) -> usize {
         let mut scrollback_buffer_count = 0;
         for row in &self.lines_above {

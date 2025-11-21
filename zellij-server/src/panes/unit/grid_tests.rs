@@ -4024,3 +4024,26 @@ fn test_get_markers_in_range() {
     assert_eq!(markers_in_range.len(), 1);
     assert_eq!(markers_in_range[0].marker_type, CommandMarkerType::CommandExecutionStart);
 }
+
+#[test]
+fn test_clear_markers_before_line() {
+    let mut grid = create_test_grid();
+
+    // Add markers at lines 0, 5, 10
+    grid.cursor.y = 0;
+    grid.osc_dispatch(&[b"133", b"A"], true);
+
+    grid.cursor.y = 5;
+    grid.osc_dispatch(&[b"133", b"C"], true);
+
+    grid.cursor.y = 10;
+    grid.osc_dispatch(&[b"133", b"D", b"0"], true);
+
+    assert_eq!(grid.command_markers.len(), 3);
+
+    // Clear markers before line 6
+    grid.clear_markers_before_line(6);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].line_number, 10);
+}
