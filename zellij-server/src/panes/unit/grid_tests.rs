@@ -3942,3 +3942,50 @@ fn test_osc_133_prompt_start_marker() {
     assert_eq!(grid.command_markers[0].line_number, 0);
     assert_eq!(grid.command_markers[0].column_number, 0);
 }
+
+// 🔴 RED - Cycle 2: Tests for OSC 133;B, C, D, E
+#[test]
+fn test_osc_133_prompt_end_marker() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"B".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::PromptEnd);
+}
+
+#[test]
+fn test_osc_133_command_start_marker() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"C".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandExecutionStart);
+}
+
+#[test]
+fn test_osc_133_command_end_marker_with_exit_code() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"D".as_ref(), b"127".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandEnd);
+    assert_eq!(grid.command_markers[0].exit_code, Some(127));
+}
+
+#[test]
+fn test_osc_133_command_line_text() {
+    let mut grid = create_test_grid();
+
+    let params = vec![b"133".as_ref(), b"E".as_ref(), b"ls -la".as_ref()];
+    grid.osc_dispatch(&params, true);
+
+    assert_eq!(grid.command_markers.len(), 1);
+    assert_eq!(grid.command_markers[0].marker_type, CommandMarkerType::CommandLine);
+    assert_eq!(grid.command_markers[0].command_text, Some("ls -la".to_string()));
+}

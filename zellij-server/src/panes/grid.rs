@@ -45,7 +45,11 @@ use std::time::SystemTime;
 // OSC 133 Shell Integration Support
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandMarkerType {
-    PromptStart,
+    PromptStart,           // OSC 133;A
+    PromptEnd,             // OSC 133;B
+    CommandExecutionStart, // OSC 133;C
+    CommandEnd,            // OSC 133;D
+    CommandLine,           // OSC 133;E
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +57,8 @@ pub struct CommandMarker {
     pub marker_type: CommandMarkerType,
     pub line_number: usize,
     pub column_number: usize,
+    pub exit_code: Option<i32>,
+    pub command_text: Option<String>,
     pub timestamp: u64,
 }
 
@@ -621,6 +627,38 @@ impl Grid {
             self.lines_below.len(),
             (self.scrollback_buffer_lines + self.lines_below.len()),
         )
+    }
+
+    fn record_command_marker(&mut self, marker_type: CommandMarkerType, params: &[&[u8]]) {
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let exit_code = if marker_type == CommandMarkerType::CommandEnd && params.len() >= 3 {
+            std::str::from_utf8(params[2])
+                .ok()
+                .and_then(|s| s.trim().parse::<i32>().ok())
+        } else {
+            None
+        };
+
+        let command_text = if marker_type == CommandMarkerType::CommandLine && params.len() >= 3 {
+            std::str::from_utf8(params[2])
+                .ok()
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
+
+        self.command_markers.push(CommandMarker {
+            marker_type,
+            line_number: self.cursor.y + self.lines_above.len(),
+            column_number: self.cursor.x,
+            exit_code,
+            command_text,
+            timestamp,
+        });
     }
 
     fn recalculate_scrollback_buffer_count(&self) -> usize {
@@ -2779,18 +2817,19 @@ impl Perform for Grid {
 
             // OSC 133 - Shell Integration / Command Markers
             b"133" => {
-                if params.len() >= 2 && params[1] == b"A" {
-                    let timestamp = SystemTime::now()
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as u64)
-                        .unwrap_or(0);
+                if params.len() >= 2 {
+                    let marker_type = match params[1] {
+                        b"A" => Some(CommandMarkerType::PromptStart),
+                        b"B" => Some(CommandMarkerType::PromptEnd),
+                        b"C" => Some(CommandMarkerType::CommandExecutionStart),
+                        b"D" => Some(CommandMarkerType::CommandEnd),
+                        b"E" => Some(CommandMarkerType::CommandLine),
+                        _ => None,
+                    };
 
-                    self.command_markers.push(CommandMarker {
-                        marker_type: CommandMarkerType::PromptStart,
-                        line_number: self.cursor.y + self.lines_above.len(),
-                        column_number: self.cursor.x,
-                        timestamp,
-                    });
+                    if let Some(marker_type) = marker_type {
+                        self.record_command_marker(marker_type, params);
+                    }
                 }
             },
 
